@@ -1,0 +1,91 @@
+
+name: PHP CI/CD - AWS CodeDeploy
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-west-2
+  S3_BUCKET: php-cicd-artifacts-455101322901-2026
+  APPLICATION_NAME: php-cicd-application
+  DEPLOYMENT_GROUP: php-cicd-deployment-group
+
+jobs:
+  build:
+    name: Build PHP Application
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+
+      - name: Validate PHP
+        run: php -l index.php
+
+      - name: Create deployment package
+        run: |
+          zip -r php-app.zip \
+            index.php \
+            appspec.yml \
+            scripts/
+
+      - name: Upload artifact to S3
+        uses: actions/upload-artifact@v4
+        with:
+          name: php-app
+          path: php-app.zip
+
+  deploy:
+    name: Deploy to AWS CodeDeploy
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Download deployment package
+        uses: actions/download-artifact@v4
+        with:
+          name: php-app
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::455101322901:role/GitHubActions-CodeDeploy-Role
+          aws-region: us-west-2
+
+      - name: Upload package to S3
+        run: |
+          aws s3 cp php-app.zip \
+            s3://php-cicd-artifacts-455101322901-2026/releases/${GITHUB_SHA}.zip
+
+      - name: Create CodeDeploy deployment
+        run: |
+          DEPLOYMENT_ID=$(aws deploy create-deployment \
+            --application-name "$APPLICATION_NAME" \
+            --deployment-group-name "$DEPLOYMENT_GROUP" \
+            --deployment-config-name CodeDeployDefault.AllAtOnce \
+            --s3-location bucket="$S3_BUCKET",key="releases/${GITHUB_SHA}.zip",bundleType=zip \
+            --query deploymentId \
+            --output text)
+
+          echo "DEPLOYMENT_ID=$DEPLOYMENT_ID" >> "$GITHUB_ENV"
+
+      - name: Wait for deployment success
+        run: |
+          aws deploy wait deployment-successful \
+            --deployment-id "$DEPLOYMENT_ID"
+
+          echo "Deployment completed successfully!"
