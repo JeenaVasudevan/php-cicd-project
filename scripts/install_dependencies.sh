@@ -2,9 +2,8 @@
 #!/bin/bash
 set -e
 
-apt-get update -y
-apt-get install -y apache2 php libapache2-mod-php
+dnf install -y httpd php
 
-systemctl enable apache2
+systemctl enable httpd
 
 echo "Apache and PHP installation completed"
